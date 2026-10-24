@@ -296,12 +296,39 @@ function parseAndRender(text) {
     return;
   }
 
-  // 在每一段数据里找"对象数组";多段时路径加段号前缀区分
-  candidates = [];
-  dataList.forEach(function (d, i) {
-    var prefix = dataList.length > 1 ? '(第' + (i + 1) + '段)' : '';
-    findObjectArrays(d, prefix, candidates);
+  // 在每一段数据里找"对象数组"(路径先不带段号)
+  var perSegment = dataList.map(function (d) {
+    var list = [];
+    findObjectArrays(d, '', list);
+    return list;
   });
+
+  // 判断各段格式是否一致:每段都有候选数组,且候选路径完全相同
+  var sameFormat = dataList.length > 1 && perSegment.every(function (list) { return list.length > 0; }) &&
+    perSegment.every(function (list) {
+      return list.map(function (c) { return c.path; }).sort().join('|') ===
+        perSegment[0].map(function (c) { return c.path; }).sort().join('|');
+    });
+
+  candidates = [];
+  if (sameFormat) {
+    // 格式一致:合并同路径的数据行为一张表
+    var merged = {};
+    var order = [];
+    perSegment.forEach(function (list) {
+      list.forEach(function (c) {
+        if (!merged[c.path]) { merged[c.path] = []; order.push(c.path); }
+        merged[c.path] = merged[c.path].concat(c.rows);
+      });
+    });
+    candidates = order.map(function (p) { return { path: p, rows: merged[p] }; });
+  } else {
+    // 单段,或格式不一致:分段展示,路径带段号区分
+    dataList.forEach(function (d, i) {
+      var prefix = dataList.length > 1 ? '(第' + (i + 1) + '段)' : '';
+      findObjectArrays(d, prefix, candidates);
+    });
+  }
 
   if (candidates.length === 0) {
     // 没找到数组：每段作为一行展示

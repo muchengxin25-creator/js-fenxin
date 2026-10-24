@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JSON 转表格工具</title>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: #f0f2f5;
+    color: #333;
+    min-height: 100vh;
+    padding: 24px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .subtitle { color: #888; font-size: 13px; margin-bottom: 16px; }
+
+  .card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    margin-bottom: 16px;
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 160px;
+    border: 1px solid #d9d9d9;
+    border-radius: 6px;
+    padding: 10px;
+    font-family: Consolas, monospace;
+    font-size: 13px;
+    resize: vertical;
+  }
+  textarea:focus { outline: none; border-color: #4096ff; }
+
+  .toolbar {
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  button {
+    border: none;
+    border-radius: 6px;
+    padding: 8px 18px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: opacity .15s;
+  }
+  button:hover { opacity: .85; }
+  .btn-primary { background: #1677ff; color: #fff; }
+  .btn-plain { background: #e9ecef; color: #333; }
+  .btn-mini {
+    background: #e9ecef;
+    color: #333;
+    padding: 3px 10px;
+    font-size: 12px;
+    border-radius: 4px;
+  }
+
+  .file-btn {
+    display: inline-block;
+    background: #e9ecef;
+    border-radius: 6px;
+    padding: 8px 18px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .file-btn:hover { opacity: .85; }
+  .file-btn input { display: none; }
+
+  .error {
+    display: none;
+    background: #fff1f0;
+    border: 1px solid #ffa39e;
+    color: #cf1322;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-top: 12px;
+    font-size: 13px;
+    white-space: pre-wrap;
+  }
+
+  .row-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+    font-size: 13px;
+  }
+  .row-line select {
+    padding: 5px 8px;
+    border: 1px solid #d9d9d9;
+    border-radius: 6px;
+    font-size: 13px;
+    max-width: 100%;
+  }
+
+  /* 字段选择区 */
+  .field-picker {
+    border: 1px solid #e8e8e8;
+    border-radius: 6px;
+    padding: 8px 10px;
+    max-height: 170px;
+    overflow-y: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin-bottom: 10px;
+    background: #fafafa;
+  }
+  .field-picker label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    padding: 2px 0;
+  }
+
+  .summary { font-size: 13px; color: #666; margin-bottom: 10px; }
+  .table-wrap { overflow-x: auto; max-height: 60vh; }
+  table { border-collapse: collapse; font-size: 13px; }
+  th, td {
+    border: 1px solid #e8e8e8;
+    padding: 8px 12px;
+    text-align: left;
+    white-space: nowrap;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  th { background: #fafafa; font-weight: 600; position: sticky; top: 0; }
+  tbody tr:nth-child(even) { background: #fafcff; }
+  tbody tr:hover { background: #e6f4ff; }
+
+  #resultArea { display: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>JSON 转表格工具</h1>
+  <p class="subtitle">粘贴 JSON 内容或选择 JSON 文件，自动识别里面的数据数组并生成表格</p>
+
+  <div class="card">
+    <textarea id="jsonInput" placeholder='在这里粘贴 JSON，支持接口返回的嵌套结构，例如：{"success":true,"result":{"list":[{...},{...}]}}'></textarea>
+    <div class="toolbar">
+      <button class="btn-primary" id="parseBtn">生成表格</button>
+      <label class="file-btn">选择 JSON 文件<input type="file" id="fileInput" accept=".json,.js,.txt,application/json"></label>
+      <button class="btn-plain" id="demoBtn">载入示例</button>
+      <button class="btn-plain" id="clearBtn">清空</button>
+    </div>
+    <div class="error" id="errorBox"></div>
+  </div>
+
+  <div class="card" id="resultArea">
+    <div class="row-line" id="sourceLine" style="display:none;">
+      <span>数据位置：</span>
+      <select id="sourceSelect"></select>
+    </div>
+
+    <div class="row-line">
+      <span>选择字段：</span>
+      <button class="btn-mini" id="checkAllBtn">全选</button>
+      <button class="btn-mini" id="uncheckAllBtn">全不选</button>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer;margin-left:8px;">
+        <input type="checkbox" id="tsConvert" checked> 时间戳转日期
+      </label>
+    </div>
+    <div class="field-picker" id="fieldPicker"></div>
+
+    <p class="summary" id="summaryText"></p>
+    <div class="row-line">
+      <button class="btn-primary" id="exportXlsxBtn">导出 Excel</button>
+      <button class="btn-plain" id="exportBtn">导出 CSV</button>
+      <span style="color:#888;font-size:12px;">Excel 格式带自适应列宽和居中(推荐);CSV 无格式但通用</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead id="tableHead"></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+var jsonInput = document.getElementById('jsonInput');
+var errorBox = document.getElementById('errorBox');
+var resultArea = document.getElementById('resultArea');
+var summaryText = document.getElementById('summaryText');
+var tableHead = document.getElementById('tableHead');
+var tableBody = document.getElementById('tableBody');
+var fieldPicker = document.getElementById('fieldPicker');
+var sourceLine = document.getElementById('sourceLine');
+var sourceSelect = document.getElementById('sourceSelect');
+
+// 当前解析后的状态
+var candidates = [];   // 找到的所有"数据数组"：[{path, rows}]
+var currentRows = [];  // 当前选中的数据行
+var allColumns = [];   // 当前数据的所有列名
+var checkedOrder = []; // 用户勾选字段的先后顺序（表格列按此顺序渲染）
+
+// ============ 事件绑定 ============
+
+document.getElementById('parseBtn').addEventListener('click', function () {
+  parseAndRender(jsonInput.value);
+});
+
+document.getElementById('fileInput').addEventListener('change', function (e) {
+  var file = e.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function () {
+    jsonInput.value = reader.result;
+    parseAndRender(reader.result);
+  };
+  reader.onerror = function () { showError('文件读取失败，请重试。'); };
+  reader.readAsText(file, 'UTF-8');
+});
+
+document.getElementById('demoBtn').addEventListener('click', function () {
+  var demo = {
+    success: true,
+    result: {
+      total: 3,
+      list: [
+        { "姓名": "小明", "年龄": 18, "城市": "北京", "发货时间": 1791727397000, "备注": null },
+        { "姓名": "小红", "年龄": 20, "城市": "上海", "发货时间": 1790839080000, "备注": "组长" },
+        { "姓名": "小刚", "年龄": 19, "城市": "广州", "发货时间": null, "备注": null }
+      ]
+    }
+  };
+  jsonInput.value = JSON.stringify(demo, null, 2);
+  parseAndRender(jsonInput.value);
+});
+
+document.getElementById('clearBtn').addEventListener('click', function () {
+  jsonInput.value = '';
+  errorBox.style.display = 'none';
+  resultArea.style.display = 'none';
+  document.getElementById('fileInput').value = '';
+});
+
+// 时间戳转换开关
+document.getElementById('tsConvert').addEventListener('change', renderTable);
+
+// 导出 CSV
+document.getElementById('exportBtn').addEventListener('click', exportCsv);
+
+// 导出 Excel
+document.getElementById('exportXlsxBtn').addEventListener('click', exportXlsx);
+
+// 数据位置下拉切换
+sourceSelect.addEventListener('change', function () {
+  var idx = Number(sourceSelect.value);
+  useCandidate(idx);
+});
+
+// 字段全选 / 全不选
+document.getElementById('checkAllBtn').addEventListener('click', function () {
+  setAllFields(true);
+});
+document.getElementById('uncheckAllBtn').addEventListener('click', function () {
+  setAllFields(false);
+});
+
+// ============ 核心逻辑 ============
+
+/**
+ * 解析输入文本（带容错），并驱动后续渲染
+ * @param {string} text 用户输入的文本
+ */
+function parseAndRender(text) {
+  hideError();
+  resultArea.style.display = 'none';
+
+  if (!text || !text.trim()) {
+    showError('内容为空，请先粘贴 JSON 或选择文件。');
+    return;
+  }
+
+  var data;
+  try {
+    data = looseJsonParse(text);
+  } catch (err) {
+    showError('无法解析这段内容，不是有效的 JSON：\n' + err.message);
+    return;
+  }
+
+  // 在数据里找所有"对象数组"
+  candidates = [];
+  findObjectArrays(data, '', candidates);
+
+  if (candidates.length === 0) {
+    // 没找到数组：按单条数据展示（对象→一行；基本类型→一行）
+    var fallbackRows = (data !== null && typeof data === 'object') ? [data] : [data];
+    candidates = [{ path: '(整体数据)', rows: fallbackRows }];
+  }
+
+  // 默认选中行数最多的那个数组
+  var bestIdx = 0;
+  candidates.forEach(function (c, i) {
+    if (c.rows.length > candidates[bestIdx].rows.length) bestIdx = i;
+  });
+
+  // 有多个候选时显示下拉框
+  if (candidates.length > 1) {
+    sourceSelect.innerHTML = '';
+    candidates.forEach(function (c, i) {
+      var opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = c.path + '（' + c.rows.length + ' 行）';
+      sourceSelect.appendChild(opt);
+    });
+    sourceSelect.value = bestIdx;
+    sourceLine.style.display = 'flex';
+  } else {
+    sourceLine.style.display = 'none';
+  }
+
+  useCandidate(bestIdx);
+}
+
+/**
+ * 选中某个数据数组：收集列、画字段选择器、画表格
+ * @param {number} idx candidates 里的下标
+ */
+function useCandidate(idx) {
+  currentRows = candidates[idx].rows;
+  allColumns = collectColumns(currentRows);
+  if (allColumns.length === 0) allColumns = ['值'];
+  // 全为空的字段直接不显示;若全部都空(极端情况)则保留原始列
+  var nonEmptyCols = allColumns.filter(function (col) { return colNonEmptyCount(col) > 0; });
+  if (nonEmptyCols.length > 0) allColumns = nonEmptyCols;
+  checkedOrder = allColumns.slice();
+  renderFieldPicker();
+  renderTable();
+}
+
+/**
+ * 递归找出数据里所有的"对象数组"（数组里大部分是对象）
+ * @param {*} node 当前节点
+ * @param {string} path 当前节点的路径，如 result.list
+ * @param {Array} results 收集结果
+ */
+function findObjectArrays(node, path, results) {
+  if (Array.isArray(node)) {
+    var objCount = 0;
+    node.forEach(function (item) {
+      if (item !== null && typeof item === 'object' && !Array.isArray(item)) objCount++;
+    });
+    // 数组里超过一半是对象，就认为它是"数据表"
+    if (node.length > 0 && objCount >= Math.ceil(node.length / 2)) {
+      results.push({ path: path || '(根节点)', rows: node });
+      return; // 不再往这个数组内部深入
+    }
+    // 否则继续往数组内部找（比如 [[{...}]] 的情况）
+    node.forEach(function (item, i) {
+      findObjectArrays(item, (path || '') + '[' + i + ']', results);
+    });
+  } else if (node !== null && typeof node === 'object') {
+    Object.keys(node).forEach(function (key) {
+      var childPath = path ? path + '.' + key : key;
+      findObjectArrays(node[key], childPath, results);
+    });
+  }
+}
+
+/**
+ * 收集所有行里出现过的列名（保持出现顺序）
+ * @param {Array} rows 数据行
+ * @returns {Array} 列名数组
+ */
+function collectColumns(rows) {
+  var columns = [];
+  var seen = {};
+  rows.forEach(function (row) {
+    if (row !== null && typeof row === 'object' && !Array.isArray(row)) {
+      Object.keys(row).forEach(function (key) {
+        if (!seen[key]) { seen[key] = true; columns.push(key); }
+      });
+    }
+  });
+  return columns;
+}
+
+/**
+ * 统计某列有多少行有值
+ * @param {string} col 列名
+ * @returns {number} 有值的行数
+ */
+function colNonEmptyCount(col) {
+  var n = 0;
+  currentRows.forEach(function (row) {
+    if (row !== null && typeof row === 'object' && !Array.isArray(row)) {
+      var v = row[col];
+      if (v !== undefined && v !== null && v !== '') n++;
+    }
+  });
+  return n;
+}
+
+/**
+ * 渲染字段选择复选框，标注每个字段有多少行有值
+ */
+function renderFieldPicker() {
+  fieldPicker.innerHTML = '';
+  var total = currentRows.length;
+
+  allColumns.forEach(function (col) {
+    var nonEmpty = colNonEmptyCount(col);
+
+    var label = document.createElement('label');
+    var box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = checkedOrder.indexOf(col) !== -1;
+    box.value = col;
+    // 勾选变化时维护点击顺序：勾上→排到末尾，取消→从顺序里移除
+    box.addEventListener('change', function () {
+      if (box.checked) {
+        if (checkedOrder.indexOf(col) === -1) checkedOrder.push(col);
+      } else {
+        var i = checkedOrder.indexOf(col);
+        if (i !== -1) checkedOrder.splice(i, 1);
+      }
+      renderTable();
+    });
+
+    label.appendChild(box);
+    var text = document.createElement('span');
+    text.textContent = col + ' (' + nonEmpty + '/' + total + ')';
+    label.appendChild(text);
+    fieldPicker.appendChild(label);
+  });
+}
+
+/**
+ * 全选或全不选所有字段
+ * @param {boolean} checked true=全选 false=全不选
+ */
+function setAllFields(checked) {
+  var boxes = fieldPicker.querySelectorAll('input[type=checkbox]');
+  boxes.forEach(function (box) { box.checked = checked; });
+  // 批量操作没有点击顺序可言，按字段原始顺序
+  checkedOrder = checked ? allColumns.slice() : [];
+  renderTable();
+}
+
+/**
+ * 根据勾选的字段渲染表格
+ */
+function renderTable() {
+  // 读出勾选的列（按用户点击的先后顺序）
+  var checkedCols = checkedOrder.slice();
+
+  if (checkedCols.length === 0) {
+    summaryText.textContent = '请至少勾选 1 个字段';
+    tableHead.innerHTML = '';
+    tableBody.innerHTML = '';
+    resultArea.style.display = 'block';
+    return;
+  }
+
+  // 表头
+  tableHead.innerHTML = '';
+  var headRow = document.createElement('tr');
+  checkedCols.forEach(function (col) {
+    var th = document.createElement('th');
+    th.textContent = col;
+    headRow.appendChild(th);
+  });
+  tableHead.appendChild(headRow);
+
+  // 表体
+  tableBody.innerHTML = '';
+  var convertTs = document.getElementById('tsConvert').checked;
+  currentRows.forEach(function (row) {
+    var tr = document.createElement('tr');
+    checkedCols.forEach(function (col) {
+      var td = document.createElement('td');
+      td.textContent = getCellText(row, col, convertTs);
+      tr.appendChild(td);
+    });
+    tableBody.appendChild(tr);
+  });
+
+  summaryText.textContent = '共 ' + currentRows.length + ' 行，显示 ' + checkedCols.length + ' / ' + allColumns.length + ' 列';
+  resultArea.style.display = 'block';
+}
+
+/**
+ * 取某一行某一列要显示的文本
+ * @param {*} row 行数据
+ * @param {string} col 列名
+ * @param {boolean} convertTs 是否把时间戳转换为日期时间
+ * @returns {string} 单元格文本
+ */
+function getCellText(row, col, convertTs) {
+  var value;
+  if (row !== null && typeof row === 'object' && !Array.isArray(row)) {
+    value = row[col];
+  } else {
+    value = (col === '值') ? row : undefined;
+  }
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'object') return JSON.stringify(value);
+  if (convertTs) {
+    var dt = toDateTimeString(value);
+    if (dt !== null) return dt;
+  }
+  return String(value);
+}
+
+/**
+ * 判断一个值是否像时间戳，是则返回 "YYYY-MM-DD HH:mm:ss"，否则返回 null
+ * 支持 13 位毫秒和 10 位秒（限定在 2000~2100 年，避免误转普通数字）
+ * @param {*} value 单元格的原始值
+ * @returns {string|null}
+ */
+function toDateTimeString(value) {
+  var num;
+  if (typeof value === 'number') {
+    num = value;
+  } else if (typeof value === 'string' && (/^\d{13}$/.test(value) || /^\d{10}$/.test(value))) {
+    // 字符串形式的纯数字时间戳也支持（有些接口会返回字符串）
+    num = Number(value);
+  } else {
+    return null;
+  }
+
+  var ms;
+  if (num >= 946684800000 && num <= 4102444800000) {
+    ms = num;            // 13 位：毫秒
+  } else if (num >= 946684800 && num <= 4102444800) {
+    ms = num * 1000;     // 10 位：秒
+  } else {
+    return null;
+  }
+
+  var d = new Date(ms);
+  if (isNaN(d.getTime())) return null;
+  return formatDateTime(d);
+}
+
+/**
+ * 把 Date 格式化为 "YYYY-MM-DD HH:mm:ss"（本地时区）
+ * @param {Date} d 日期对象
+ * @returns {string}
+ */
+function formatDateTime(d) {
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+    ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+
+/**
+ * 容错解析：先直接 JSON.parse；失败则尝试截取最外层的 {} 或 [] 再解析
+ * （兼容 callback({...}) 或 var data = {...}; 这类 JS 包裹）
+ * @param {string} text 输入文本
+ * @returns {*} 解析结果
+ */
+function looseJsonParse(text) {
+  // 去掉 BOM 头（从网页抓取的文件经常带 BOM，会导致解析失败）
+  var trimmed = text.replace(/^\uFEFF/, '').trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch (e) {
+    var firstBrace = trimmed.indexOf('{');
+    var firstBracket = trimmed.indexOf('[');
+    var start = -1;
+    if (firstBrace === -1) start = firstBracket;
+    else if (firstBracket === -1) start = firstBrace;
+    else start = Math.min(firstBrace, firstBracket);
+
+    if (start === -1) throw e;
+    var end = Math.max(trimmed.lastIndexOf('}'), trimmed.lastIndexOf(']'));
+    if (end <= start) throw e;
+    return JSON.parse(trimmed.slice(start, end + 1));
+  }
+}
+
+/**
+ * 把当前表格(勾选的列、列顺序、显示的值)导出为 CSV 文件
+ * 带 BOM 头,Excel 双击打开中文不乱码
+ */
+function exportCsv() {
+  if (checkedOrder.length === 0 || currentRows.length === 0) {
+    showError('没有可导出的数据,请先生成表格并勾选字段。');
+    return;
+  }
+
+  var convertTs = document.getElementById('tsConvert').checked;
+  var lines = [];
+
+  // 表头行
+  lines.push(checkedOrder.map(csvEscape).join(','));
+
+  // 数据行
+  currentRows.forEach(function (row) {
+    var cells = checkedOrder.map(function (col) {
+      return csvEscape(getCellText(row, col, convertTs));
+    });
+    lines.push(cells.join(','));
+  });
+
+  // ﻿ 是 BOM 头,让 Excel 识别 UTF-8 编码
+  var blob = new Blob(['‫﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'json-table-' + timestampForFileName() + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * CSV 单元格转义:含逗号/引号/换行的值用双引号包裹,内部引号双写
+ * @param {string} text 单元格文本
+ * @returns {string} 转义后的文本
+ */
+function csvEscape(text) {
+  text = String(text);
+  if (/[",\r\n]/.test(text)) {
+    return '"' + text.replace(/"/g, '""') + '"';
+  }
+  return text;
+}
+
+/**
+ * 生成文件名用的时间戳,如 20261024-153000
+ * @returns {string}
+ */
+function timestampForFileName() {
+  var d = new Date();
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) +
+    '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+}
+
+/**
+ * 导出 Excel(.xlsx):内容与当前表格一致,列宽按内容自适应,全部居中对齐
+ * 依赖 CDN 加载的 ExcelJS 库,加载失败时提示改用 CSV
+ */
+function exportXlsx() {
+  if (checkedOrder.length === 0 || currentRows.length === 0) {
+    showError('没有可导出的数据,请先生成表格并勾选字段。');
+    return;
+  }
+  if (typeof ExcelJS === 'undefined') {
+    showError('Excel 组件未加载成功(需要联网加载),请刷新页面重试,或改用"导出 CSV"。');
+    return;
+  }
+  hideError();
+
+  var convertTs = document.getElementById('tsConvert').checked;
+
+  // 构建与页面显示一致的数据行
+  var rows = currentRows.map(function (row) {
+    return checkedOrder.map(function (col) { return getCellText(row, col, convertTs); });
+  });
+
+  var wb = new ExcelJS.Workbook();
+  var ws = wb.addWorksheet('数据');
+
+  // 列宽自适应:取每列"表头和所有数据"里最宽的内容(中文按 2 个宽度算)
+  ws.columns = checkedOrder.map(function (col, i) {
+    var maxWidth = displayWidth(col);
+    rows.forEach(function (r) {
+      var w = displayWidth(r[i]);
+      if (w > maxWidth) maxWidth = w;
+    });
+    return { header: col, width: Math.min(Math.max(maxWidth + 2, 10), 60) };
+  });
+
+  rows.forEach(function (r) { ws.addRow(r); });
+
+  // 所有单元格水平垂直居中,表头加粗
+  ws.eachRow(function (row) {
+    row.eachCell(function (cell) {
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    });
+  });
+  ws.getRow(1).font = { bold: true };
+
+  wb.xlsx.writeBuffer().then(function (buffer) {
+    var blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'json-table-' + timestampForFileName() + '.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+}
+
+/**
+ * 计算文本的显示宽度(中文/全角字符算 2,英文数字算 1)
+ * @param {*} text 要测量的文本
+ * @returns {number} 显示宽度
+ */
+function displayWidth(text) {
+  var w = 0;
+  text = String(text);
+  for (var i = 0; i < text.length; i++) {
+    w += text.charCodeAt(i) > 255 ? 2 : 1;
+  }
+  return w;
+}
+
+function showError(msg) {
+  errorBox.textContent = msg;
+  errorBox.style.display = 'block';
+}
+function hideError() {
+  errorBox.style.display = 'none';
+}
+</script>
+</body>
+</html>

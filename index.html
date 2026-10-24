@@ -288,22 +288,24 @@ function parseAndRender(text) {
     return;
   }
 
-  var data;
+  var dataList;
   try {
-    data = looseJsonParse(text);
+    dataList = looseParseMulti(text);
   } catch (err) {
     showError('无法解析这段内容，不是有效的 JSON：\n' + err.message);
     return;
   }
 
-  // 在数据里找所有"对象数组"
+  // 在每一段数据里找"对象数组";多段时路径加段号前缀区分
   candidates = [];
-  findObjectArrays(data, '', candidates);
+  dataList.forEach(function (d, i) {
+    var prefix = dataList.length > 1 ? '(第' + (i + 1) + '段)' : '';
+    findObjectArrays(d, prefix, candidates);
+  });
 
   if (candidates.length === 0) {
-    // 没找到数组：按单条数据展示（对象→一行；基本类型→一行）
-    var fallbackRows = (data !== null && typeof data === 'object') ? [data] : [data];
-    candidates = [{ path: '(整体数据)', rows: fallbackRows }];
+    // 没找到数组：每段作为一行展示
+    candidates = [{ path: '(整体数据)', rows: dataList }];
   }
 
   // 默认选中行数最多的那个数组
@@ -563,29 +565,76 @@ function formatDateTime(d) {
 }
 
 /**
- * 容错解析：先直接 JSON.parse；失败则尝试截取最外层的 {} 或 [] 再解析
- * （兼容 callback({...}) 或 var data = {...}; 这类 JS 包裹）
+ * 容错解析输入文本，返回解析出的数据数组（支持多段 JSON 拼接）
+ * 依次尝试：整段解析 → 截取最外层括号(JSONP/var 包裹) → 括号配平分段解析
  * @param {string} text 输入文本
- * @returns {*} 解析结果
+ * @returns {Array} 解析出的数据段数组
  */
-function looseJsonParse(text) {
+function looseParseMulti(text) {
   // 去掉 BOM 头（从网页抓取的文件经常带 BOM，会导致解析失败）
-  var trimmed = text.replace(/^\uFEFF/, '').trim();
+  var trimmed = text.replace(/^﻿/, '').trim();
+  var firstErr;
+
+  // 1. 整段解析
   try {
-    return JSON.parse(trimmed);
+    return [JSON.parse(trimmed)];
   } catch (e) {
+    firstErr = e;
+  }
+
+  // 2. 截取最外层 {} 或 []（兼容 callback({...}) 或 var data = {...}; 包裹）
+  try {
     var firstBrace = trimmed.indexOf('{');
     var firstBracket = trimmed.indexOf('[');
     var start = -1;
     if (firstBrace === -1) start = firstBracket;
     else if (firstBracket === -1) start = firstBrace;
     else start = Math.min(firstBrace, firstBracket);
+    if (start !== -1) {
+      var end = Math.max(trimmed.lastIndexOf('}'), trimmed.lastIndexOf(']'));
+      if (end > start) return [JSON.parse(trimmed.slice(start, end + 1))];
+    }
+  } catch (e2) { /* 继续尝试分段 */ }
 
-    if (start === -1) throw e;
-    var end = Math.max(trimmed.lastIndexOf('}'), trimmed.lastIndexOf(']'));
-    if (end <= start) throw e;
-    return JSON.parse(trimmed.slice(start, end + 1));
+  // 3. 多段拼接：按括号配平切分出每段完整 JSON，逐段解析
+  var segments = splitJsonSegments(trimmed);
+  if (segments.length > 1) {
+    return segments.map(function (seg) { return JSON.parse(seg); });
   }
+  throw firstErr;
+}
+
+/**
+ * 按括号配平把文本切分成多段完整 JSON（字符串内的括号不参与配平）
+ * 例如 "{...}\n{...}" 切出两段；"var a={...};" 也能提取其中的 {...}
+ * @param {string} text 输入文本
+ * @returns {Array} 每段 JSON 的字符串数组
+ */
+function splitJsonSegments(text) {
+  var segments = [];
+  var depth = 0, start = -1, inStr = false, esc = false;
+  for (var i = 0; i < text.length; i++) {
+    var ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{' || ch === '[') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}' || ch === ']') {
+      depth--;
+      if (depth < 0) return segments; // 括号不匹配，放弃分段
+      if (depth === 0) {
+        segments.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+  return segments;
 }
 
 /**
